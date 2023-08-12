@@ -1,4 +1,5 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, Markup
+import requests
 import os
 import requests
 from werkzeug.utils import secure_filename
@@ -9,7 +10,9 @@ from email.mime.application import MIMEApplication
 import smtplib
 import imaplib
 import csv
+import gspread
 import traceback
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -23,7 +26,7 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def create_email_content_style(name):
+def create_email_main(name):
     if name != " ":
         name = name.strip()
         greeting = f"Hey {name},"
@@ -117,18 +120,15 @@ def create_email_content(name):
     html_content = f'''
         <!DOCTYPE html>
         <html>
-        <head>
-        </head>
         <body>
-            <div>
-                <p>{greeting}</p>
-                <p>Do you know, Punmaska has replaced Amul butter as Desh ka Butter?! 😱🤯</p>
-                <p>I'm Aayushi from Punmaska. Here, to boost your Instagram! 🚀</p>
-                <p>Click on the below link to have a look at our Pun intended pitch! 🤌</p>
-                <a href="https://www.punmaska.com/coming-soon-03-1">https://www.punmaska.com/coming-soon-03-1</a>
-                <br><p>Hoping to see you on the other side of the screen! 💻</p>
-                <p>Cheers,<br>Punmaska! ☕</p>
-            </div>
+        <p>{greeting}</p>
+        <p>Do you know, Punmaska has replaced Amul butter as Desh ka Butter?! 😱🤯</p>
+        <p>I'm Aayushi from Punmaska. Here, to boost your Instagram! 🚀</p>
+        <p>Click on the below link to have a look at our Pun intended pitch! 🤌</p>
+        <a href="https://www.punmaska.com/coming-soon-03-1">https://www.punmaska.com/coming-soon-03-1</a>
+        <p>Hoping to see you on the other side of the screen! 💻</p>
+        <p>Cheers, <br>
+        Punmaska! ☕</p>
         </body>
         </html>
     '''
@@ -166,14 +166,14 @@ def send_email_with_attachments(subject, to_email, html_content, pdf_files=None,
                 imap_server.select("Sent")
                 imap_server.append("Sent", None, None, msg.as_bytes())
 
-        print('Email sent',to_email)
+        #print('Email sent',to_email)
 
     except smtplib.SMTPException as smtp_ex:
-        print(f'An error occurred while sending the email: {smtp_ex}')
+        #print(f'An error occurred while sending the email: {smtp_ex}')
         traceback.print_exc()
         errAcc.append(to_email)
     except Exception as e:
-        print(f'An error occurred while sending the email: {e}')
+        #print(f'An error occurred while sending the email: {e}')
         traceback.print_exc()
         errAcc.append(to_email)
     
@@ -187,52 +187,102 @@ def read_recipients_from_csv(csv_file):
                 email = row['Email'].strip()
                 recipients.append((name, email))
     except Exception as e:
-        print(f'An error occurred while reading the CSV file: {e}')
+        pass
+        #print(f'An error occurred while reading the CSV file: {e}')
 
     return recipients
+
+# def read_recipients_from_csv():
+#     recipients = []
+#     try:
+#         # Fetch recipients from the Google Sheet (public sheet)
+#         client = gspread.authorize(None)  # No credentials needed for public sheets
+#         sheet = client.open_by_url('https://docs.google.com/spreadsheets/d/1ZEt8gCD3cYuMeJJGKky1itiXBTpBBp-oi-W6QDaJpFg')
+#         worksheet = sheet.get_worksheet(0)
+#         values = worksheet.get_all_records()
+#         for row in values:
+#             name = f" {row['Name'].strip()}"
+#             email = row['Email'].strip()
+#             recipients.append((name, email))
+#     except Exception as e:
+#         #print(f'An error occurred while reading the Google Sheet: {e}')
+
+#     return recipients
 
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    # Initialize log messages list
+    log_messages = []
+
     if request.method == 'POST':
         if 'csv_file' not in request.files:
-            return "No file part"
+            log_messages.append("No file part")
+            return render_template('index.html', log_messages=Markup('<br>'.join(log_messages)))
         
         file = request.files['csv_file']
 
         if file.filename == '':
-            return "No selected file"
+            log_messages.append("No selected file")
+            return render_template('index.html', log_messages=Markup('<br>'.join(log_messages)))
         
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
             file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
             
+            # Handle checkboxes and radio button
+            moveToSent = True if 'moveToSent' in request.form else False
+            sentPdf = True if 'sentPdf' in request.form else False
+            mainMail = True if 'emailType' in request.form and request.form['emailType'] == 'main' else False
+            replyEnable = True if 'replyEnable' in request.form else False
+
             # Update the recipients list to use the uploaded CSV file
             recipients = read_recipients_from_csv(os.path.join(app.config['UPLOAD_FOLDER'], filename))
             
-            subject = "You and Punmaska > Chai and Bunmaska ☕🚀"
-            pdf_files = [r"Punmaska_Overview.pdf"]
-            moveToSent = False
-            sentPdf = False
-            errAcc = []
+        # Handle the custom subject
+        if 'subjectEdit' in request.form:
+            # Check if the custom subject checkbox is selected
+            custom_subject_checked = request.form.get('subjectEdit') == 'on'
 
-            for name, email in recipients:
-                try:
-                    html_content = create_email_content(name)
-                    html_content = html_content.replace("{name}", name)
-                    send_email_with_attachments(subject, email, html_content, pdf_files, moveToSent, sentPdf, errAcc)
-                except Exception as e:
-                    print(f"Error sending email to {email}: {e}")
-                    errAcc.append(email)
-
-            if errAcc:
-                sendTelegramMessage(errAcc)
+            # Use custom subject if checkbox is checked, otherwise use default subject
+            if custom_subject_checked:
+                subject = request.form.get('customSubject', "You and Punmaska > Chai and Bunmaska ☕🚀")
             else:
-                sendTelegramMessage("All Done")
+                subject = "You and Punmaska > Chai and Bunmaska ☕🚀"
+        else:
+            subject = "You and Punmaska > Chai and Bunmaska ☕🚀"
 
-            return "Emails sent successfully"
-    
-    return render_template('index.html')
+        if 'replyEnable' in request.form:
+            subject = "RE: " + subject
+            
+        pdf_files = [r"Punmaska_Overview.pdf"]
+        errAcc = []
+
+        for name, email in recipients:
+            try:
+                if mainMail:
+                    html_content = create_email_main(name)
+                else:
+                    html_content = create_email_content(name)
+                html_content = html_content.replace("{name}", name)
+                send_email_with_attachments(subject, email, html_content, pdf_files, moveToSent, sentPdf, errAcc)
+                # Add log message for successful email
+                log_messages.append(f"Email sent to: {email}")
+            except Exception as e:
+                #print(f"Error sending email to {email}: {e}")
+                errAcc.append(email)
+                # Add log message for failed email
+                log_messages.append(f"Error sending email to {email}: {e}")
+
+        if errAcc:
+            sendTelegramMessage(errAcc)
+        else:
+            sendTelegramMessage("All Done")
+            log_messages.append("All emails sent successfully")
+
+        return render_template('index.html', log_messages=Markup('<br>'.join(log_messages)))
+
+    return render_template('index.html', log_messages="")
 
 def sendTelegramMessage(message):
     bot_token = "6289896747:AAEReBXOFz83XIxkviNAZMIMfuMIOS2XGdw"
@@ -242,7 +292,8 @@ def sendTelegramMessage(message):
         rsp = requests.get(url)
         rsp.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"Error sending Telegram message: {e}")
+        pass
+        #print(f"Error sending Telegram message: {e}")
 
 # if __name__ == '__main__':
 #     app.run(debug=True)
