@@ -236,8 +236,7 @@ def index():
             replyEnable = True if 'replyEnable' in request.form else False
 
             # Update the recipients list to use the uploaded CSV file
-            # recipients = read_recipients_from_csv(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-            recipients = read_recipients_from_csv()
+            recipients = read_recipients_from_csv(os.path.join(app.config['UPLOAD_FOLDER'], filename))
             
         # Handle the custom subject
         if 'subjectEdit' in request.form:
@@ -294,5 +293,5 @@ def sendTelegramMessage(message):
     except requests.exceptions.RequestException as e:
         print(f"Error sending Telegram message: {e}")
 
-# if __name__ == '__main__':
-#     app.run(debug=True)
+if __name__ == '__main__':
+    app.run(debug=True)
